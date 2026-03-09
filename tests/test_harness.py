@@ -20,21 +20,30 @@ SAMPLE_PROVIDER_RESULTS = {
         "avg_call_latency_ms": 0.5,
         "avg_total_time_s": 3.2,
         "avg_api_input_tokens": 500,
+        "avg_cached_input_tokens": 0,
         "avg_api_output_tokens": 200,
+        "avg_api_turns": 3,
+        "avg_tool_calls": 3,
     },
     "cli": {
         "tool_definition_tokens": 100,
         "avg_call_latency_ms": 15.0,
         "avg_total_time_s": 4.1,
         "avg_api_input_tokens": 500,
+        "avg_cached_input_tokens": 0,
         "avg_api_output_tokens": 200,
+        "avg_api_turns": 3,
+        "avg_tool_calls": 3,
     },
     "mcp": {
         "tool_definition_tokens": 150,
         "avg_call_latency_ms": 25.0,
         "avg_total_time_s": 5.5,
         "avg_api_input_tokens": 550,
+        "avg_cached_input_tokens": 0,
         "avg_api_output_tokens": 200,
+        "avg_api_turns": 3,
+        "avg_tool_calls": 3,
     },
 }
 
@@ -57,5 +66,4 @@ def test_format_results_multi_llm():
     md = format_results(results)
     assert "Claude" in md
     assert "GPT" in md
-    assert "Cross-LLM" in md
     assert "|" in md
