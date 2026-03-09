@@ -1,24 +1,44 @@
 # MCP vs Direct vs CLI Benchmark
 
-**Benchmarking three approaches to wiring tools into AI agents — so you can pick the right one.**
+**Benchmarking tool-wiring approaches across two agents — a custom API loop and Claude Code — so you can pick the right one.**
 
 ## The Question
 
-When building AI agents, how should tools be connected to the LLM? MCP (Model Context Protocol) is the emerging standard for tool integration, but it introduces protocol overhead: server lifecycle, JSON-RPC serialization, and dynamic discovery. Is that overhead worth it when your tools run in the same process? This benchmark measures the concrete cost of each approach across latency, token usage, and end-to-end task completion.
+When building AI agents, how should tools be connected to the LLM? MCP (Model Context Protocol) is the emerging standard for tool integration, but it introduces protocol overhead: server lifecycle, JSON-RPC serialization, and dynamic discovery. Is that overhead worth it when your tools run in the same process? And does the choice of agent matter?
 
-## Three Approaches
+This benchmark measures the concrete cost of each approach across latency, token usage, and end-to-end task completion — using both a custom API tool-call loop and Claude Code as the agent.
 
-### MCP (Model Context Protocol)
+## Two Agents
 
-Spawns a server process, connects via stdio JSON-RPC, and discovers tools dynamically at runtime. This is the standard for cross-boundary tool communication — ideal when tools live in separate processes, machines, or are provided by third parties.
+### Custom Runner (API tool-call loop)
 
-### Direct API (Pydantic)
+A minimal agent that calls the Anthropic/OpenAI API directly in a while-loop, executing tool calls and feeding results back. Supports four tool-wiring approaches:
 
-In-process Python functions with Pydantic models for input validation. Tool schemas are generated from `model_json_schema()` and passed directly to the Anthropic API. Zero serialization overhead, zero process boundaries.
+- **Direct (Pydantic)** — In-process Python functions with Pydantic models. Zero serialization overhead, zero process boundaries.
+- **CLI (subprocess)** — Standalone Python scripts invoked via `asyncio.create_subprocess_exec`. The agent shells out for every call.
+- **MCP (3 tools)** — MCP filesystem server via stdio, filtered to 3 tools matching direct/CLI for a fair comparison.
+- **MCP (all 14 tools)** — MCP filesystem server with all tools exposed, showing real-world schema overhead.
 
-### CLI (subprocess)
+### Claude Code (CLI agent)
 
-Standalone Python scripts invoked via `asyncio.create_subprocess_exec`. Each tool is an independently runnable script that accepts JSON on stdin and returns JSON on stdout. The agent shells out for every call.
+Claude Code invoked via `claude -p` in non-interactive mode. A full-featured agent with its own tool management. Tested with four approaches:
+
+- **Built-in tools** — Native Claude Code tools (Read, Write, Bash, etc.). The zero-overhead baseline.
+- **Bash only** — Only the Bash tool allowed. Shell commands for all file operations.
+- **MCP (3 tools)** — MCP filesystem server, filtered to 3 tools, built-in file tools disabled.
+- **MCP (all 14 tools)** — MCP filesystem server with all tools, built-in file tools disabled.
+
+## Tasks
+
+| Task | Description |
+|------|-------------|
+| **file-ops** | List files, read hello.txt, write a one-line summary to summary.txt |
+| **conditional-write** | Read hello.txt, write summary.txt only if status is "active" (tests branching logic) |
+
+```bash
+uv run python -m src.benchmark --list-tasks   # see available tasks
+uv run python -m src.benchmark --tasks file-ops  # run specific task(s)
+```
 
 ## What We Measure
 
@@ -28,7 +48,6 @@ Standalone Python scripts invoked via `asyncio.create_subprocess_exec`. Each too
 | **Per-call latency** | Wall-clock time from tool invocation to result |
 | **End-to-end task time** | Total time to complete a multi-step agent task |
 | **Total API tokens** | Input + output tokens consumed across the full task |
-All three approaches execute the same task (file operations in a temp directory) with the same underlying tool implementations, so differences reflect pure integration overhead.
 
 ## Run It Yourself
 
@@ -38,11 +57,12 @@ All three approaches execute the same task (file operations in a temp directory)
 - [uv](https://docs.astral.sh/uv/) package manager
 - Node.js (required by MCP server runtime)
 - Anthropic API key and/or OpenAI API key
+- Claude Code CLI (for Claude Code agent benchmarks)
 
 ### Setup
 
 ```bash
-git clone https://github.com/odedha-dr/mcp-vs-direct-benchmark.git
+git clone https://github.com/TomOfekKafka/mcp-vs-direct-benchmark.git
 cd mcp-vs-direct-benchmark
 
 cp .env.example .env
@@ -69,71 +89,100 @@ Results are printed to the terminal and saved to `results/`.
 
 ## Results
 
-Benchmark run on 2026-03-09, 2 runs per approach, same filesystem task (list directory, read file, write summary file). All approaches expose the same 3 tools for a fair apples-to-apples comparison.
+Benchmark run on 2026-03-09, 2 runs per approach.
 
-### Claude (Sonnet 4)
+### Task: file-ops
 
-| Metric | Direct (Pydantic) | CLI (subprocess) | MCP |
-|--------|-------------------|-------------------|-----|
-| Tool definition tokens | 203 | 186 | 461 |
-| Avg tool call latency | 1.8 ms | 28.8 ms | 4.6 ms |
-| Avg total task time | 10.8 s | 10.3 s | 10.0 s |
-| Avg API input tokens | 3,447 | 3,360 | 4,373 |
-| Avg API output tokens | 490 | 482 | 495 |
-| Avg API turns | 4 | 4 | 4 |
-| Avg tool calls | 3 | 3 | 3 |
+#### Custom Runner — Claude (Sonnet 4)
 
-### GPT-4o
+| Metric | Direct (Pydantic) | CLI (subprocess) | MCP (3 tools) | MCP (all 14 tools) |
+|--------|-------------------|-------------------|----------------|---------------------|
+| Tool definition tokens | 203 | 186 | 461 | 2,044 |
+| Avg tool call latency | 0.5 ms | 84.6 ms | 7.0 ms | 7.7 ms |
+| Avg total task time | 13.1 s | 13.9 s | 13.3 s | 15.0 s |
+| Avg API input tokens | 3,471 | 3,369 | 4,401 | 10,915 |
+| Avg API output tokens | 486 | 484 | 507 | 499 |
+| Avg API turns | 4 | 4 | 4 | 4 |
+| Avg tool calls | 3 | 3 | 3 | 3 |
 
-| Metric | Direct (Pydantic) | CLI (subprocess) | MCP |
-|--------|-------------------|-------------------|-----|
-| Tool definition tokens | 227 | 210 | 485 |
-| Avg tool call latency | 2.8 ms | 26.9 ms | 3.3 ms |
-| Avg total task time | 3.8 s | 3.6 s | 3.6 s |
-| Avg API input tokens | 1,206 | 1,164 | 1,877 |
-| Avg API output tokens | 204 | 209 | 210 |
-| Avg API turns | 4 | 4 | 4 |
-| Avg tool calls | 3 | 3 | 3 |
+#### Custom Runner — GPT-4o
 
-### Cross-LLM Comparison (Direct approach)
+| Metric | Direct (Pydantic) | CLI (subprocess) | MCP (3 tools) | MCP (all 14 tools) |
+|--------|-------------------|-------------------|----------------|---------------------|
+| Tool definition tokens | 227 | 210 | 485 | 2,156 |
+| Avg tool call latency | 1.2 ms | 96.5 ms | 11.5 ms | 13.2 ms |
+| Avg total task time | 6.5 s | 4.2 s | 4.8 s | 5.2 s |
+| Avg API input tokens | 1,225 | 1,184 | 1,899 | 5,348 |
+| Avg API output tokens | 207 | 196 | 212 | 209 |
+| Avg API turns | 4 | 4 | 4 | 4 |
+| Avg tool calls | 3 | 3 | 3 | 3 |
 
-| Metric | Claude Sonnet 4 | GPT-4o |
-|--------|-----------------|--------|
-| Avg total task time | 10.8 s | 3.8 s |
-| Avg API input tokens | 3,447 | 1,206 |
-| Avg API output tokens | 490 | 204 |
-| Avg API turns | 4 | 4 |
-| Avg tool calls | 3 | 3 |
+#### Claude Code — Claude (Sonnet 4)
+
+| Metric | Built-in tools | Bash only | MCP (3 tools) | MCP (all 14 tools) |
+|--------|---------------|-----------|----------------|---------------------|
+| Avg total task time | 17.6 s | 16.8 s | 14.2 s | 13.3 s |
+| Avg API output tokens | 543 | 440 | 537 | 552 |
+| Avg turns | 5 | 4 | 5 | 5 |
+
+### Task: conditional-write
+
+#### Custom Runner — Claude (Sonnet 4)
+
+| Metric | Direct (Pydantic) | CLI (subprocess) | MCP (3 tools) | MCP (all 14 tools) |
+|--------|-------------------|-------------------|----------------|---------------------|
+| Tool definition tokens | 203 | 186 | 461 | 2,044 |
+| Avg tool call latency | 0.4 ms | 95.5 ms | 6.2 ms | 13.0 ms |
+| Avg total task time | 5.2 s | 4.6 s | 4.8 s | 8.5 s |
+| Avg API input tokens | 1,486 | 1,438 | 1,942 | 8,096 |
+| Avg API output tokens | 174 | 164 | 177 | 353 |
+| Avg API turns | 2 | 2 | 2 | 3 |
+| Avg tool calls | 1 | 1 | 1 | 2 |
+
+#### Custom Runner — GPT-4o
+
+| Metric | Direct (Pydantic) | CLI (subprocess) | MCP (3 tools) | MCP (all 14 tools) |
+|--------|-------------------|-------------------|----------------|---------------------|
+| Tool definition tokens | 227 | 210 | 485 | 2,156 |
+| Avg tool call latency | 0.7 ms | 97.6 ms | 18.5 ms | 11.0 ms |
+| Avg total task time | 3.0 s | 2.3 s | 5.0 s | 2.3 s |
+| Avg API input tokens | 519 | 495 | 1,419 | 2,569 |
+| Avg API output tokens | 65 | 66 | 146 | 72 |
+| Avg API turns | 2 | 2 | 3 | 2 |
+| Avg tool calls | 1 | 1 | 2 | 1 |
+
+#### Claude Code — Claude (Sonnet 4)
+
+| Metric | Built-in tools | Bash only | MCP (3 tools) | MCP (all 14 tools) |
+|--------|---------------|-----------|----------------|---------------------|
+| Avg total task time | 9.2 s | 12.0 s | 12.3 s | 14.1 s |
+| Avg API output tokens | 311 | 230 | 376 | 368 |
+| Avg turns | 3 | 2.5 | 4 | 4 |
 
 ### Analysis
 
-All runs completed the same task with identical behavior: 4 API turns, 3 tool calls (list, read, write). No errors, no retries.
+**Tool-wiring overhead (Custom Runner)**
 
-**1. MCP overhead exists but isn't dramatic**
+- MCP (3 tools) adds ~2x more tool definition tokens than Direct (461 vs 203), but end-to-end task time is comparable — LLM response latency dominates.
+- MCP (all 14 tools) is where overhead becomes significant: ~10x more tool definition tokens (2,044) and ~3x more input tokens per task, though caching helps on subsequent turns.
+- CLI subprocess overhead (~85-100ms per call) is measurable but doesn't meaningfully impact end-to-end time for these small tasks.
 
-With the same 3 tools, MCP adds measurable but modest cost:
+**Claude Code agent**
 
-- **~2x more tool definition tokens** (461 vs 203) — MCP schemas include richer metadata (annotations, readOnlyHint, etc.)
-- **~27% more API input tokens** with Claude (4,373 vs 3,447)
-- **No meaningful difference in end-to-end time** — within noise for both LLMs
+- Built-in tools are fastest for Claude Code, especially on the conditional task (9.2s vs 12-14s for MCP).
+- MCP adds overhead even for a sophisticated agent — the pattern holds across both agents.
+- Claude Code takes more total time than the custom runner (~17s vs ~13s for file-ops), reflecting the overhead of a full-featured agent.
 
-All three approaches (Direct, CLI, MCP) produce the same task behavior and comparable wall-clock times. The integration method doesn't matter much — LLM response latency dominates.
+**Cross-LLM (Custom Runner)**
 
-**2. Claude and GPT-4o differ significantly**
-
-This is the more interesting finding. With identical task behavior (same turns, same tool calls), GPT-4o completes in ~3.8s vs Claude's ~10.8s — nearly **3x faster**. The gap shows up across every metric:
-
-- **2.9x more input tokens** with Claude (3,447 vs 1,206) — same 3 tool definitions, same conversation, but Claude's message format is significantly more verbose
-- **2.4x more output tokens** (490 vs 204) — Claude generates longer responses for the same task
-- **~3x slower end-to-end** — a combination of higher per-turn latency and more tokens to process
-
-Both models complete the task correctly with the same number of steps. The difference is pure efficiency: GPT-4o's message encoding is more compact and its responses are more concise. For tool-heavy agentic workloads where you're paying per-token and per-second, this gap compounds.
+- GPT-4o completes tasks ~2-3x faster than Claude, using ~3x fewer input tokens and ~2x fewer output tokens for the same task with the same number of turns.
+- Both models handle the conditional task correctly, reducing to 1 tool call and 2 turns when the status is inactive.
 
 ### Takeaway
 
-**MCP vs Direct**: MCP adds ~2x tool definition tokens due to richer schemas, but the impact on total cost and latency is modest. Pick your integration approach based on architecture (same-process vs cross-boundary), not performance.
+**MCP vs Direct/CLI**: MCP adds token overhead from richer tool schemas but doesn't meaningfully impact end-to-end time with a small tool set. With all 14 tools exposed, the overhead compounds. Pick your integration approach based on architecture needs, not performance — unless you're exposing many tools.
 
-**Claude vs GPT-4o**: The bigger surprise is the cross-LLM gap. GPT-4o uses ~3x fewer input tokens and ~2.4x fewer output tokens for the same task, resulting in ~3x faster completion. For token-heavy agentic workloads, the choice of LLM matters more than the choice of tool integration.
+**Agent choice matters**: Claude Code is slower than a minimal custom runner for simple tasks, but brings capabilities (code execution, reasoning) that matter for complex tasks.
 
 ## When to Use What
 
@@ -151,9 +200,15 @@ mcp-vs-direct-benchmark/
 │   ├── benchmark.py              # Main benchmark entry point
 │   ├── __main__.py               # Module runner
 │   ├── harness/
-│   │   ├── runner.py             # Benchmark runner (drives the agent loop)
+│   │   ├── runner.py             # Custom runner (API tool-call loop)
+│   │   ├── claude_code_runner.py # Claude Code CLI runner
 │   │   ├── reporter.py           # Results formatting and comparison
 │   │   └── token_counter.py      # Token usage tracking
+│   ├── tasks/
+│   │   ├── base.py               # BenchmarkTask protocol
+│   │   ├── file_ops.py           # file-ops task
+│   │   ├── conditional_write.py  # conditional-write task
+│   │   └── registry.py           # Task registry
 │   └── tools/
 │       ├── interface.py           # Common tool interface
 │       ├── mcp/
